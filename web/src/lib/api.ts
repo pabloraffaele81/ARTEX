@@ -3,6 +3,7 @@
 // a few fields the backend serializes differently (e.g. created_at as a unix int)
 // are passed through and formatted at the call site.
 
+import { t } from "@/i18n";
 import type { ChatMention } from "@/lib/chat-mentions";
 import { MOCK } from "@/lib/mock/enabled";
 import { mockHandle } from "@/lib/mock/handler";
@@ -148,7 +149,7 @@ export async function http<T>(path: string, init?: RequestInit): Promise<T> {
       document.cookie = "artex_token=; path=/; max-age=0";
       window.location.href = "/login";
     }
-    throw new Error("Unauthorized");
+    throw new Error(t("Unauthorized"));
   }
   if (!r.ok) {
     const fallback = `${init?.method ?? "GET"} ${path}: ${r.status}`;
@@ -490,7 +491,7 @@ export const api = {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: fd,
     });
-    if (!r.ok) throw new Error(`Upload failed: ${r.status}`);
+    if (!r.ok) throw new Error(t("Upload failed: {error}", { error: r.status }));
     return r.json() as Promise<{ uploaded: number }>;
   },
   workspaceDownload: async (path: string) => {
@@ -502,7 +503,7 @@ export const api = {
       const r = await fetch(`/api/workspace/download?path=${encodeURIComponent(path)}`, {
         headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       });
-      if (!r.ok) throw new Error(`Download failed: ${r.status}`);
+      if (!r.ok) throw new Error(t("Download failed: {error}", { error: r.status }));
       blob = await r.blob();
     }
     const objUrl = URL.createObjectURL(blob);
@@ -616,7 +617,7 @@ export const api = {
     const r = await fetch(`/api/exploration/findings/export?${p.toString()}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
-    if (!r.ok) throw new Error(`export: ${r.status}`);
+    if (!r.ok) throw new Error(t("Export failed: {error}", { error: r.status }));
     const blob = await r.blob();
     // Prefer the backend's Content-Disposition for the filename; fall back to a default name.
     const disp = r.headers.get("Content-Disposition") ?? "";
@@ -691,8 +692,8 @@ export const api = {
       { headers: token ? { Authorization: `Bearer ${token}` } : {} },
     );
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: "Download failed" }));
-      throw new Error(error.error ?? "Download failed");
+      const error = await response.json().catch(() => ({ error: t("Download failed") }));
+      throw new Error(error.error ?? t("Download failed"));
     }
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
@@ -839,6 +840,7 @@ export const api = {
       body?: string;
       path?: string;
       status?: string;
+      rewritten?: string;
       respMin?: string;
       respMax?: string;
       sort?: string;
@@ -853,6 +855,7 @@ export const api = {
         (opts.body ? `&body=${encodeURIComponent(opts.body)}` : "") +
         (opts.path ? `&path=${encodeURIComponent(opts.path)}` : "") +
         (opts.status && opts.status !== "all" ? `&status=${encodeURIComponent(opts.status)}` : "") +
+        (opts.rewritten && opts.rewritten !== "all" ? `&rewritten=${encodeURIComponent(opts.rewritten)}` : "") +
         (opts.respMin ? `&resp_min=${encodeURIComponent(opts.respMin)}` : "") +
         (opts.respMax ? `&resp_max=${encodeURIComponent(opts.respMax)}` : "") +
         (opts.sort ? `&sort=${encodeURIComponent(opts.sort)}` : "") +
@@ -865,19 +868,23 @@ export const api = {
   // Raw bytes of one stored blob (a full message payload or an oversized body).
   // The JSON-only `get` cannot carry binary, hence the direct fetch.
   trafficBlob: async (hash: string) => {
-    if (MOCK) throw new Error("Blob download is not available in mock mode");
+    if (MOCK) throw new Error(t("Blob download is not available in mock mode"));
     const token = getToken();
     const r = await fetch(`/api/traffic/blob?hash=${encodeURIComponent(hash)}`, {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     });
-    if (!r.ok) throw new Error(`Blob download failed: ${r.status}`);
+    if (!r.ok) throw new Error(t("Blob download failed: {error}", { error: r.status }));
     return new Uint8Array(await r.arrayBuffer());
   },
-  // Re-sends an edited request through the proxy. Errors carry the HTTP status
-  // (ApiError): 413 body too large, 502 proxy/upstream, 503 capture off, 504 timeout.
+  // Re-sends an edited request through the proxy (bypasses capture rewrite rules
+  // unless req.apply_rules is true). Errors carry the HTTP status (ApiError):
+  // 413 body too large, 502 proxy/upstream, 503 capture off, 504 timeout.
   trafficReplay: async (req: TrafficReplayRequest) => {
-    if (MOCK) throw new Error("Replay is not available in mock mode");
-    return post<TrafficReplayResult>(`/traffic/replay`, req);
+    if (MOCK) throw new Error(t("Replay is not available in mock mode"));
+    return post<TrafficReplayResult>(`/traffic/replay`, {
+      ...req,
+      apply_rules: Boolean(req.apply_rules),
+    });
   },
   trafficHosts: () => get<{ hosts: TrafficHost[] }>(`/traffic/hosts`),
   trafficDeleteHost: (host: string) => del<{ deleted: number }>(`/traffic?host=${encodeURIComponent(host)}`),
@@ -947,7 +954,7 @@ export const api = {
     const r = await fetch(`/api/report${tq(task)}`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
-    if (!r.ok) throw new Error(`report: ${r.status}`);
+    if (!r.ok) throw new Error(t("Report failed: {error}", { error: r.status }));
     return r.text();
   },
   chatMentions: (kind: string, query: string, signal?: AbortSignal, cursor = "") =>
@@ -962,7 +969,7 @@ export const api = {
   chatUpload: async (scope: "task" | "session" | "staging", id: string, files: File[]) => {
     const totalSize = files.reduce((total, file) => total + file.size, 0);
     if (totalSize > MAX_CHAT_UPLOAD_BYTES) {
-      throw new Error("Files exceed the 512 MiB upload limit (combined size).");
+      throw new Error(t("Files exceed the 512 MiB upload limit (combined size)."));
     }
     if (MOCK)
       return {
@@ -981,7 +988,7 @@ export const api = {
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: fd,
     });
-    if (!r.ok) throw new Error(`Upload failed: ${r.status} ${await r.text()}`);
+    if (!r.ok) throw new Error(t("Upload failed: {error}", { error: `${r.status} ${await r.text()}` }));
     return r.json() as Promise<{ attachments: ChatAttachment[] }>;
   },
   stopChat: (taskId: string) => post<{ status: string }>(`/tasks/${taskId}/chat/stop`, {}),
@@ -1245,7 +1252,7 @@ export const api = {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     const body = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(body?.error || `Upload failed (${r.status})`);
+    if (!r.ok) throw new Error(body?.error || t("Upload failed ({status})", { status: r.status }));
     return body;
   },
   deleteSkill: (name: string) => del<{ deleted: string }>(`/skills/${name}`),
